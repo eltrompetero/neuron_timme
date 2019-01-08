@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 import os
 from scipy.io import loadmat
+from scipy.interpolate import interp1d
 DATADR = os.path.expanduser('~')+'/Dropbox/Research/py_lib/data_sets/neuron_timme'
 
 
@@ -84,4 +85,36 @@ class NeuronData():
         # remove 0 if it's the first entry
         avalanches = [a[1:] if a[0]==0 else a for a in avalanches]
 
+        # cache avalanches
+        self._avalanches = avalanches
+
         return avalanches
+    
+    def cum_profile(self, n_interpolate=100):
+        """Return average of linearly interpolated cumulative profile.
+        
+        Parameters
+        ----------
+        n_interpolate : int, 100
+
+        Returns
+        -------
+        ndarray
+            Cum profile.
+        ndarray
+            Discretized time.
+        """
+
+        if not '_avalanches' in self.__dict__.keys():
+            self.avalanches()
+        av = self._avalanches
+
+        # interpolate each avalanche
+        t = np.linspace(0, 1, n_interpolate)
+
+        avgTraj = np.zeros(t.size)
+        for i,a in enumerate(av):
+            avgTraj += interp1d(np.linspace(0,1,a.size+1), np.insert(np.cumsum(a),0,0)/a.sum())(t)
+        avgTraj /= len(av)
+
+        return avgTraj, t
