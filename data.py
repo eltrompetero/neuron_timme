@@ -103,6 +103,8 @@ class NeuronData():
             Cum profile.
         ndarray
             Discretized time.
+        int
+            Number of avalanches averaged.
         """
 
         if not '_avalanches' in self.__dict__.keys():
@@ -117,4 +119,4 @@ class NeuronData():
             avgTraj += interp1d(np.linspace(0,1,a.size+1), np.insert(np.cumsum(a),0,0)/a.sum())(t)
         avgTraj /= len(av)
 
-        return avgTraj, t
+        return avgTraj, t, len(av)
