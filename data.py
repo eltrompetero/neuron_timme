@@ -121,8 +121,10 @@ class NeuronData():
             for i,a in enumerate(av):
                 avgTraj += interp1d(np.linspace(0,1,a.size+1), np.insert(np.cumsum(a),0,0)/a.sum())(t)
         else:
+            # if no zero inserted, must account for lattice bias of 1/S at t=0 explicitly
             for i,a in enumerate(av):
-                avgTraj += interp1d(np.linspace(0,1,a.size+1), np.cumsum(a)/a.sum())(t)
+                traj = (np.cumsum(a)/a.sum() - 1/a.sum())/(1 - 1/a.sum())
+                avgTraj += interp1d(np.linspace(0,1,a.size), traj)(t)
 
         avgTraj /= len(av)
 
