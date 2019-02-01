@@ -90,12 +90,14 @@ class NeuronData():
 
         return avalanches
     
-    def cum_profile(self, n_interpolate=100):
+    def cum_profile(self, n_interpolate=100, insert_zero=False):
         """Return average of linearly interpolated cumulative profile.
         
         Parameters
         ----------
         n_interpolate : int, 100
+        insert_zero : bool, False
+            If True, insert 0 at beginning of trajectory to pin start at 0.
 
         Returns
         -------
@@ -115,8 +117,13 @@ class NeuronData():
         t = np.linspace(0, 1, n_interpolate)
 
         avgTraj = np.zeros(t.size)
-        for i,a in enumerate(av):
-            avgTraj += interp1d(np.linspace(0,1,a.size+1), np.insert(np.cumsum(a),0,0)/a.sum())(t)
+        if insert_zero:
+            for i,a in enumerate(av):
+                avgTraj += interp1d(np.linspace(0,1,a.size+1), np.insert(np.cumsum(a),0,0)/a.sum())(t)
+        else:
+            for i,a in enumerate(av):
+                avgTraj += interp1d(np.linspace(0,1,a.size+1), np.cumsum(a)/a.sum())(t)
+
         avgTraj /= len(av)
 
         return avgTraj, t, len(av)
