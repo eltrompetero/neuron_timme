@@ -90,14 +90,15 @@ class NeuronData():
 
         return avalanches
     
-    def cum_profile(self, n_interpolate=100, insert_zero=False):
+    def cum_profile(self, dt=None, n_interpolate=101, insert_zero=False, return_error=False):
         """Return average of linearly interpolated cumulative profile.
         
         Parameters
         ----------
-        n_interpolate : int, 100
+        n_interpolate : int, 101
         insert_zero : bool, False
             If True, insert 0 at beginning of trajectory to pin start at 0.
+        return_error : bool, False
 
         Returns
         -------
@@ -107,25 +108,30 @@ class NeuronData():
             Discretized time.
         int
             Number of avalanches averaged.
+        ndarray (optional)
+            If return_error is True.
         """
 
-        if not '_avalanches' in self.__dict__.keys():
+        if dt is None and not '_avalanches' in self.__dict__.keys():
             self.avalanches()
+        elif dt:
+            self.avalanches(dt=dt)
         av = self._avalanches
 
         # interpolate each avalanche
         t = np.linspace(0, 1, n_interpolate)
 
-        avgTraj = np.zeros(t.size)
+        traj = np.zeros((len(av),t.size))
         if insert_zero:
             for i,a in enumerate(av):
-                avgTraj += interp1d(np.linspace(0,1,a.size+1), np.insert(np.cumsum(a),0,0)/a.sum())(t)
+                traj[i] = interp1d(np.linspace(0,1,a.size+1), np.insert(np.cumsum(a),0,0)/a.sum())(t)
         else:
             # if no zero inserted, must account for lattice bias of 1/S at t=0 explicitly
             for i,a in enumerate(av):
-                traj = (np.cumsum(a)/a.sum() - 1/a.sum())/(1 - 1/a.sum())
-                avgTraj += interp1d(np.linspace(0,1,a.size), traj)(t)
+                traj_ = (np.cumsum(a)/a.sum() - 1/a.sum())/(1 - 1/a.sum())
+                traj[i] = interp1d(np.linspace(0,1,a.size), traj_)(t)
 
-        avgTraj /= len(av)
-
+        avgTraj = traj.mean(0)
+        if return_error:
+            return avgTraj, t, len(av), traj.std(ddof=1,axis=0)
         return avgTraj, t, len(av)
