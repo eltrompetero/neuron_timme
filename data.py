@@ -38,7 +38,6 @@ def split_at_zeros(x, n_zeros):
 
     while not done:
         if countingZeros:
-            print('zero')
             zerocounter = 0
             while i<x.size and x[i]==0:
                 zerocounter += 1
@@ -49,7 +48,6 @@ def split_at_zeros(x, n_zeros):
                 split = False
             countingZeros = False
         else:
-            print('not zero')
             if split:
                 y.append(x[startix:i])
                 y[-1] = y[-1][:-count_zeros_at_end(y[-1])]
@@ -101,13 +99,14 @@ class NeuronData():
             self.interspikeInterval = np.diff(sortedSpikeTimes).mean()*self.binsize
         return self.interspikeInterval
 
-    def cat_avalanches(self, dt=None, min_len=10):
+    def cat_avalanches(self, n_zeros, dt=None, min_len=10):
         """
         Cluster neuron spikes into avalanches given time bin discretization and using time
         contiguous cascades.
 
         Parameters
         ----------
+        n_zeros : int
         dt : float, None
             If not specified, the average interspike interval from the data is used.
         min_len : int, 10
@@ -135,8 +134,8 @@ class NeuronData():
         for i in range(self.n_neurons):
             binnedCounts[spikes_[i]] += 1
         
-        # identify contiguous sections where at least one neuron is firing in every time bin
-        avalanches = np.split(binnedCounts, np.where(np.diff(np.cumsum(binnedCounts==0))>cutoff)[0]+1)
+        # identify contiguous sections defined by where there are no more than n bins that are empty
+        avalanches = split_at_zeros(binnedCounts, n_zeros)
         avalanches = [a for a in avalanches if len(a)>min_len]
         # remove 0 if it's the first entry
         avalanches = [a[1:] if a[0]==0 else a for a in avalanches]
@@ -190,7 +189,47 @@ class NeuronData():
         self._avalanches = avalanches
 
         return avalanches
-    
+
+    def rate_profile(self, dt=None, n_interpolate=101, return_error=True):
+        """Return average of linearly interpolated cumulative profile.
+        
+        Parameters
+        ----------
+        n_interpolate : int, 101
+        insert_zero : bool, False
+            If True, insert 0 at beginning of trajectory to pin start at 0.
+        return_error : bool, False
+
+        Returns
+        -------
+        ndarray
+            Cum profile.
+        ndarray
+            Discretized time.
+        int
+            Number of avalanches averaged.
+        ndarray (optional)
+            If return_error is True.
+        """
+
+        if dt is None and not '_avalanches' in self.__dict__.keys():
+            self.avalanches()
+        elif dt:
+            self.avalanches(dt=dt)
+        av = self._avalanches
+
+        # interpolate each avalanche
+        t = np.linspace(0, 1, n_interpolate)
+
+        traj = np.zeros((len(av),t.size))
+        for i,a in enumerate(av):
+            traj[i] = interp1d(np.linspace(0,1,a.size), a/a.sum()*a.size)(t)
+
+        avgTraj = traj.mean(0)
+        if return_error:
+            return avgTraj, t, len(av), traj.std(ddof=1,axis=0)
+        return avgTraj, t, len(av)
+
     def cum_profile(self, dt=None, n_interpolate=101, insert_zero=False, return_error=False):
         """Return average of linearly interpolated cumulative profile.
         
