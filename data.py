@@ -26,7 +26,7 @@ def split_at_zeros(x, n_zeros):
     assert n_zeros>=1
     assert x.ndim==1
     y = []
-    countingZeros = x[0]==0
+    countingZeros = True
     done = False
     i = 0
     startix = 0
@@ -61,6 +61,13 @@ def split_at_zeros(x, n_zeros):
         if i==x.size:
             y.append(x[startix:i])
             done = True
+
+    # don't consider any ending zeros
+    if y[-1][-1]==0:
+        i = y[-1].size-1
+        while  i>0 and y[-1][i]==0:
+            i -= 1
+        y[-1] = y[-1][:i+1]
 
     return y
 
@@ -230,14 +237,17 @@ class NeuronData():
             return avgTraj, t, len(av), traj.std(ddof=1,axis=0)
         return avgTraj, t, len(av)
 
-    def cum_profile(self, dt=None, n_interpolate=101, insert_zero=False, return_error=False):
+    def cum_profile(self, dt=None,
+                    n_interpolate=101,
+                    correct_bias=True,
+                    min_duration=10,
+                    return_error=False):
         """Return average of linearly interpolated cumulative profile.
         
         Parameters
         ----------
         n_interpolate : int, 101
-        insert_zero : bool, False
-            If True, insert 0 at beginning of trajectory to pin start at 0.
+        min_duration : int, 4
         return_error : bool, False
 
         Returns
@@ -262,14 +272,19 @@ class NeuronData():
         t = np.linspace(0, 1, n_interpolate)
 
         traj = np.zeros((len(av),t.size))
-        if insert_zero:
-            for i,a in enumerate(av):
-                traj[i] = interp1d(np.linspace(0,1,a.size+1), np.insert(np.cumsum(a),0,0)/a.sum())(t)
-        else:
-            # if no zero inserted, must account for lattice bias of 1/S at t=0 explicitly
-            for i,a in enumerate(av):
-                traj_ = (np.cumsum(a)/a.sum() - 1/a.sum())/(1 - 1/a.sum())
-                traj[i] = interp1d(np.linspace(0,1,a.size), traj_)(t)
+        # if no zero inserted, must account for lattice bias of 1/S at t=0 explicitly
+        for i,a in enumerate(av):
+            if a.size>=min_duration:
+                x = np.linspace(0,1,a.size)
+                x = np.insert(x, range(x.size), x)[1:]
+                y = np.cumsum(a)/a.sum()
+                y = np.insert(y, range(y.size), y)[:-1]
+
+                y -= 1/a.size
+                y[-1] -= 1/a.size
+                y /= y[-1]
+
+                traj[i] = interp1d(x,y)(t)
 
         avgTraj = traj.mean(0)
         if return_error:
