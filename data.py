@@ -97,7 +97,8 @@ class NeuronData():
 
     def calculate_interspike(self):
         """Network-wide interspike interval considering all spikes by all neurons in a
-        single time series.
+        single time series. This value is typically used for deciding how to discretize
+        the time series.
         """
 
         if self.interspikeInterval is None:
@@ -152,6 +153,39 @@ class NeuronData():
 
         return avalanches
 
+    def binary_time_series(self, dt=None):
+        """Cluster neuron spikes into avalanches given time bin discretization and using
+        time contiguous cascades.
+
+        Parameters
+        ----------
+        dt : float, None
+            If not specified, the average interspike interval from the data is used.
+
+        Returns
+        -------
+        ndarray of type uint8
+            Each row is a different neuron.
+        """
+        
+        if dt is None:
+            dt = self.calculate_interspike()
+        assert dt>=self.binsize, "Specified dt cannot be smaller than recording discreteness."
+
+        # round each spike timing to the nearest bin
+        spikes_ = self.spikes[:]
+        factor = dt/self.binsize
+        for i in range(self.n_neurons):
+            spikes_[i] = np.around(spikes_[i]/factor).astype(int)
+        
+        T = max([i[-1] for i in spikes_])
+        assert T*self.n_neurons<1e8, "Binary array will be too large."
+        X = np.zeros((self.n_neurons, T+1), dtype=np.uint8)
+        for i in range(self.n_neurons):
+            X[i,spikes_[i]] = 1
+        
+        return X
+
     def avalanches(self, dt=None, min_len=10):
         """
         Cluster neuron spikes into avalanches given time bin discretization and using time
@@ -167,7 +201,7 @@ class NeuronData():
         Returns
         -------
         list of ndarrays
-            Each ndarray specified how many different neurons were firing at each point in
+            Each ndarray specifies how many different neurons were firing at each point in
             time.
         """
         
