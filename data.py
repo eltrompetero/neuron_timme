@@ -8,6 +8,8 @@ import numpy as np
 import os
 from scipy.io import loadmat
 from scipy.interpolate import interp1d
+from scipy.spatial.distance import squareform
+from coniii.utils import pair_corr
 from numba import njit
 DATADR = os.path.expanduser('~')+'/Dropbox/Research/py_lib/data_sets/neuron_timme'
 
@@ -71,11 +73,72 @@ def split_at_zeros(x, n_zeros):
 
     return y
 
+def coarse_grain(X, n_times=1):
+    """Combine pairs of neurons with largest correlations.
+
+    Parameters
+    ----------
+    X : ndarray
+        (n_samples, n_neurons)
+    n_times : int, 1
+
+    Returns
+    -------
+    ndarray
+    list of lists
+        Each element list specified which cols of X belong in the coarse-graining.
+    """
+
+    assert np.log2(X.shape[1])>n_times
+
+    coarseX = X.copy()
+    originalIx = [[i] for i in range(X.shape[1])]
+
+    # Combine sets of spins with the largest pairwise correlations
+    for coarseix in range(n_times):
+        n = coarseX.shape[1]
+        cij = squareform(pair_corr(coarseX)[1])
+        ix = list(range(coarseX.shape[1]))
+        
+        newClusters = []
+        for i in range(n//2):
+            # find maximally correlated pair of spins
+            mxix = np.argmax(cij.ravel())
+            mxix = (mxix//(n-2*i), mxix-(n-2*i)*(mxix//(n-2*i)))  # row and col
+            if mxix[0]>mxix[1]:
+                mxix = (mxix[1],mxix[0])
+            
+            newClusters.append((ix[mxix[0]], ix[mxix[1]]))
+            # remove corresponding rows and cols of pair
+            cij = np.delete(np.delete(cij, mxix[0], axis=0), mxix[0], axis=1)
+            cij = np.delete(np.delete(cij, mxix[1]-1, axis=0), mxix[1]-1, axis=1)
+            ix.pop(mxix[0])
+            ix.pop(mxix[1]-1)
+        if n%2:
+            # if X contains an odd number of voters
+            newClusters.append((ix[0],))
+        # check that every index appears once (and only once)
+        #assert np.array_equal(np.sort(np.concatenate(newClusters)),np.arange(n)), newClusters
+        
+        # coarse-grain votes such any positive lead to positive vote
+        X_ = np.zeros((coarseX.shape[0],int(np.ceil(n/2))), dtype=np.uint8)
+        originalIx_ = []
+        for i,ix in enumerate(newClusters):
+            X_[:,i] = (coarseX[:,ix]==1).any(1)
+            originalIx_.append([])
+            for ix_ in ix:
+                originalIx_[-1] += originalIx[ix_]
+        originalIx = originalIx_
+        coarseX = X_
+    binsix = originalIx
+    
+    return coarseX, binsix
+
+
 
 class NeuronData():
     def __init__(self, culture, div):
-        """
-        Load an instance of data.
+        """Load an instance of data.
 
         Parameters
         ----------
@@ -95,17 +158,34 @@ class NeuronData():
         self.params = data['data'][0][0][8]
         self.interspikeInterval = None
 
-    def calculate_interspike(self):
+    def calculate_interspike(self, spikes=None):
         """Network-wide interspike interval considering all spikes by all neurons in a
         single time series. This value is typically used for deciding how to discretize
         the time series.
+
+        Parameters
+        ----------
+        spikes : list, None
+            If None, interspike time is calculated for original data set. Otherwise it's
+            calculated for the given spike timings.
+
+        Returns
+        -------
+        float
         """
 
-        if self.interspikeInterval is None:
-            sortedSpikeTimes = np.concatenate(self.spikes).tolist()
-            sortedSpikeTimes.sort()
-            self.interspikeInterval = np.diff(sortedSpikeTimes).mean()*self.binsize
-        return self.interspikeInterval
+        if spikes is None:
+            spikes = self.spikes
+
+            if self.interspikeInterval is None:
+                sortedSpikeTimes = np.concatenate(spikes).tolist()
+                sortedSpikeTimes.sort()
+                self.interspikeInterval = np.diff(sortedSpikeTimes).mean()*self.binsize
+            return self.interspikeInterval
+
+        sortedSpikeTimes = np.concatenate(spikes).tolist()
+        sortedSpikeTimes.sort()
+        return np.diff(sortedSpikeTimes).mean()*self.binsize
 
     def cat_avalanches(self, n_zeros, dt=None, min_len=10):
         """
@@ -153,21 +233,23 @@ class NeuronData():
 
         return avalanches
 
-    def binary_time_series(self, dt=None):
+    def binary_time_series(self, dt=None, n_coarse_grain=0):
         """Cluster neuron spikes into avalanches given time bin discretization and using
         time contiguous cascades.
 
         Parameters
         ----------
         dt : float, None
-            If not specified, the average interspike interval from the data is used.
+            If not specified, the average interspike interval from the data is used (given
+            the level of coarse graining).
+        n_coarse_grain : int, 0
 
         Returns
         -------
         ndarray of type uint8
             Each row is a different neuron.
         """
-        
+
         if dt is None:
             dt = self.calculate_interspike()
         assert dt>=self.binsize, "Specified dt cannot be smaller than recording discreteness."
@@ -183,7 +265,31 @@ class NeuronData():
         X = np.zeros((self.n_neurons, T+1), dtype=np.uint8)
         for i in range(self.n_neurons):
             X[i,spikes_[i]] = 1
+
+        if n_coarse_grain==0:
+            return X
         
+        # coarse grain (dt is ignored)
+        _, bins = coarse_grain(X.T, n_times=n_coarse_grain)
+
+        # combine spike time series
+        coarseSpikes = []
+        for b in bins:
+            coarseSpikes.append(np.concatenate([self.spikes[i] for i in b]))
+        #dt /= n_coarse_grain  # interspike interval doesn't change
+        #assert dt>=self.binsize, "Specified dt cannot be smaller than recording discreteness."
+
+        # round each spike timing to the nearest bin
+        #factor = dt/self.binsize
+        for i in range(len(coarseSpikes)):
+            coarseSpikes[i] = np.around(coarseSpikes[i]/factor).astype(int)
+        
+        #T = max([max(i) for i in coarseSpikes])
+        #assert T*len(coarseSpikes)<1e8, "Binary array will be too large."
+        X = np.zeros((len(coarseSpikes), T+1), dtype=np.uint8)
+        for i in range(len(coarseSpikes)):
+            X[i,coarseSpikes[i]] = 1
+
         return X
 
     def avalanches(self, dt=None, min_len=10):
